@@ -1,2 +1,6 @@
 # esp8266-rtos-sntp
-Preliminar SNTP implementation for ESP8266 modules using esp-open-rtos
+Preliminary SNTP implementation for ESP8266 modules using esp-open-rtos
+
+Make sure you adjust Makefile and local.mk to your needs.
+
+Code is BSD licensed.
