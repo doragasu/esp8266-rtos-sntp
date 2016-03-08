@@ -22,6 +22,9 @@
 
 #include "sntp.h"
 
+#define SNTP_SERVERS 	"0.pool.ntp.org", "1.pool.ntp.org", \
+						"2.pool.ntp.org", "3.pool.ntp.org"
+
 #define vTaskDelayMs(ms)	vTaskDelay((ms)/portTICK_RATE_MS)
 #define UNUSED_ARG(x)	(void)x
 
@@ -32,6 +35,7 @@ const int freq_frc2 = 1;
 
 void SntpTsk(void *pvParameters)
 {
+	char *servers[] = {SNTP_SERVERS};
 	UNUSED_ARG(pvParameters);
 
 	// Wait until we have joined AP and are assigned an IP
@@ -41,7 +45,9 @@ void SntpTsk(void *pvParameters)
 
 	// Start SNTP
 	printf("Starting SNTP... ");
+	sntp_set_update_delay(1*60000);
 	sntp_initialize(1, 0);
+	sntp_set_servers(servers, sizeof(servers) / sizeof(char*));
 	printf("DONE!\n");
 	while(1) {
 		vTaskDelayMs(5000);
@@ -57,7 +63,8 @@ void frc2_interrupt_handler(void)
     gpio_toggle(gpio_frc2);
 }
 
-// Configure FRC2 to blink the LED.
+// Configure FRC2 to blink the LED. I'm messing with FRC2 just to test if
+// it does affect FreeRTOS.
 void Frc2Config(void) {
     /* configure GPIO */
     gpio_enable(gpio_frc2, GPIO_OUTPUT);

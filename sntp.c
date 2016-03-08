@@ -30,6 +30,8 @@
  * This file is part of the lwIP TCP/IP stack.
  * 
  * Author: Simon Goldschmidt (lwIP raw API part)
+ *
+ * Modified by Jesus Alonso (doragasu) to allow setting servers dynamically.
  */
 
 #include "lwip/opt.h"
@@ -88,9 +90,9 @@
 #define SNTP_SERVER_DNS             0
 #endif
 
-/** Set this to 1 to support more than one server */
-#ifndef SNTP_SUPPORT_MULTIPLE_SERVERS
-#define SNTP_SUPPORT_MULTIPLE_SERVERS 0
+/** Set to the number of servers supported (at least 1) */
+#ifndef SNTP_NUM_SERVERS_SUPPORTED
+#define SNTP_NUM_SERVERS_SUPPORTED	1
 #endif
 
 /** SNTP server address:
@@ -267,14 +269,16 @@ static void sntp_request(void *arg);
 /** The UDP pcb used by the SNTP client */
 static struct udp_pcb* sntp_pcb;
 /** Addresses of servers */
-static char* sntp_server_addresses[] = {SNTP_SERVER_ADDRESS};
-#if SNTP_SUPPORT_MULTIPLE_SERVERS
+static char* sntp_server_addresses[SNTP_NUM_SERVERS_SUPPORTED];
 /** The currently used server (initialized to 0) */
+static u8_t sntp_num_servers;
+#if (SNTP_NUM_SERVERS_SUPPORTED > 1)
 static u8_t sntp_current_server;
-static u8_t sntp_num_servers = sizeof(sntp_server_addresses)/sizeof(char*);
-#else /* SNTP_SUPPORT_MULTIPLE_SERVERS */
+#else
 #define sntp_current_server 0
-#endif /* SNTP_SUPPORT_MULTIPLE_SERVERS */
+#endif /* SNTP_NUM_SERVERS_SUPPORTED */
+
+static u32_t sntp_update_delay = SNTP_UPDATE_DELAY;
 
 #if SNTP_RETRY_TIMEOUT_EXP
 #define SNTP_RESET_RETRY_TIMEOUT() sntp_retry_timeout = SNTP_RETRY_TIMEOUT
@@ -427,7 +431,7 @@ sntp_thread(void *arg)
   LWIP_UNUSED_ARG(arg);
   while(1) {
     sntp_request(NULL);
-    sys_msleep(SNTP_UPDATE_DELAY);
+    sys_msleep(sntp_update_delay);
   }
 }
 
@@ -472,7 +476,7 @@ sntp_retry(void* arg)
 #endif /* SNTP_RETRY_TIMEOUT_EXP */
 }
 
-#if SNTP_SUPPORT_MULTIPLE_SERVERS
+#if (SNTP_NUM_SERVERS_SUPPORTED > 1)
 /**
  * If Kiss-of-Death is received (or another packet parsing error),
  * try the next server or retry the current server and increase the retry
@@ -500,10 +504,10 @@ sntp_try_next_server(void* arg)
     sntp_retry(NULL);
   }
 }
-#else /* SNTP_SUPPORT_MULTIPLE_SERVERS */
+#else /* SNTP_NUM_SERVERS_SUPPORTED > 1 */
 /* Always retry on error if only one server is supported */
 #define sntp_try_next_server    sntp_retry
-#endif /* SNTP_SUPPORT_MULTIPLE_SERVERS */
+#endif /* SNTP_NUM_SERVERS_SUPPORTED > 1 */
 
 /** UDP recv callback for the sntp pcb */
 static void
@@ -576,9 +580,9 @@ sntp_recv(void *arg, struct udp_pcb* pcb, struct pbuf *p, ip_addr_t *addr, u16_t
     sntp_process(receive_timestamp);
 
     /* Set up timeout for next request */
-    sys_timeout((u32_t)SNTP_UPDATE_DELAY, sntp_request, NULL);
+    sys_timeout(sntp_update_delay, sntp_request, NULL);
     LWIP_DEBUGF(SNTP_DEBUG_STATE, ("sntp_recv: Scheduled next time request: %"U32_F" ms\n",
-      (u32_t)SNTP_UPDATE_DELAY));
+      sntp_update_delay));
   } else if (err == SNTP_ERR_KOD) {
     /* Kiss-of-death packet. Use another server or increase UPDATE_DELAY. */
     sntp_try_next_server(NULL);
@@ -684,6 +688,11 @@ sntp_request(void *arg)
 void
 sntp_init(void)
 {
+  char *def_addr[] = {SNTP_SERVER_ADDRESS};
+
+  sntp_num_servers = 0;
+  sntp_set_servers(def_addr, sizeof(def_addr) / sizeof(char*));
+
   SNTP_RESET_RETRY_TIMEOUT();
   sntp_pcb = udp_new();
   LWIP_ASSERT("Failed to allocate udp pcb for sntp client", sntp_pcb != NULL);
@@ -698,5 +707,42 @@ sntp_init(void)
 }
 
 #endif /* SNTP_SOCKET */
+
+/* Additions to allow dynamically settings servers and update delay */
+
+/**
+ * Set the NTP servers
+ */
+int sntp_set_servers(char *server_url[], int num_servers)
+{
+  int i;
+
+  /* Check number of servers requested */
+  if (SNTP_NUM_SERVERS_SUPPORTED < num_servers) return -1;
+
+  /* Free previously allocated buffers */
+  for (i = sntp_num_servers - 1; i >= 0; i--) {
+    free(sntp_server_addresses[i]);
+	sntp_server_addresses[i] = NULL;
+  }
+
+  /* Allocate memory and copy servers */
+  for (i = 0; i < num_servers; i++) {
+    sntp_server_addresses[i] = malloc(strlen(server_url[i]));
+    if (sntp_server_addresses[i]) {
+   	  strcpy(sntp_server_addresses[i], server_url[i]);
+    } else {
+	  sntp_num_servers = i;
+      return -2;
+    }
+  }
+  sntp_num_servers = num_servers;
+  return 0;
+}
+
+void sntp_set_update_delay(uint32_t ms)
+{
+	sntp_update_delay = ms > 15000?ms:15000;
+}
 
 #endif /* LWIP_UDP */
